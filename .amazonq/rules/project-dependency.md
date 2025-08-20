@@ -1,0 +1,6 @@
+- Project use Nextjs version 15.4.6, better-auth version 1.3.7, shadcn for components, tailwindcss for styling, and supabase for database.
+- Use toast of shadcn for notifications, display errors and success messages
+- Use context7 MCP server before coding
+- Use playwright MCP server to test. Do not Starting the Next.js development server, i have done it by myself.
+- Use pnpm to manage dependencies
+- Use batest database of supabase
