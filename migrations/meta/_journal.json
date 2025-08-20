@@ -8,6 +8,13 @@
       "when": 1755661538806,
       "tag": "0000_public_klaw",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1755693044030,
+      "tag": "0001_known_leopardon",
+      "breakpoints": true
     }
   ]
 }
