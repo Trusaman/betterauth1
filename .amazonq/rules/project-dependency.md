@@ -4,3 +4,5 @@
 - Use playwright MCP server to test. Do not Starting the Next.js development server, i have done it by myself.
 - Use pnpm to manage dependencies
 - Use batest database of supabase
+- Use drizzle orm for database
+- Use "use server"; if the function run on the server

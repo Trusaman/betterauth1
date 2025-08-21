@@ -15,6 +15,13 @@
       "when": 1755693044030,
       "tag": "0001_known_leopardon",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1755761949781,
+      "tag": "0002_fancy_power_pack",
+      "breakpoints": true
     }
   ]
 }
