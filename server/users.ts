@@ -52,3 +52,36 @@ export const signIn = async (email: string, password: string) => {
         };
     }
 };
+
+export const createUser = async (
+    email: string,
+    password: string,
+    name: string,
+    role?: string,
+    customData?: Record<string, any>
+) => {
+    try {
+        const newUser = await auth.api.createUser({
+            body: {
+                email,
+                password,
+                name,
+                role: role || "user",
+                data: customData || {},
+            },
+        });
+
+        return {
+            success: true,
+            message: "User created successfully.",
+            user: newUser,
+        };
+    } catch (error) {
+        const e = error as Error;
+
+        return {
+            success: false,
+            message: e.message || "An unknown error occurred.",
+        };
+    }
+};
