@@ -13,8 +13,6 @@ export const canCreateOrder = async () => {
             return false;
         }
 
-        console.log("session", session.user.id);
-
         const { success, error } = await auth.api.userHasPermission({
             body: {
                 userId: session.user.id,

@@ -18,8 +18,6 @@ export interface CreateOrderData {
 export async function createOrder(data: CreateOrderData) {
     const canCreate = await canCreateOrder();
 
-    console.log("canCreate", canCreate);
-
     if (!canCreate) {
         throw new Error("You don't have permission to create an order");
     }
