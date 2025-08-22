@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/table";
 import { toast } from "sonner";
 import { createOrder, getOrders, updateOrderStatus } from "@/lib/orders";
+import { authClient } from "@/lib/auth-client";
 
 interface OrderItem {
     id: string;
@@ -46,8 +47,14 @@ export default function OrderPage() {
     }, []);
 
     const loadOrders = async () => {
+        const { data: session } = await authClient.getSession();
+        if (!session?.user?.id) {
+            toast.error("Please sign in to view orders");
+            return;
+        }
+
         try {
-            const data = await getOrders();
+            const data = await getOrders(session.user.id);
             const groupedOrders = data.reduce((acc: Order[], row) => {
                 const existingOrder = acc.find((o) => o.id === row.id);
                 if (existingOrder && row.items.id) {
@@ -99,6 +106,12 @@ export default function OrderPage() {
             return;
         }
 
+        const { data: session } = await authClient.getSession();
+        if (!session?.user?.id) {
+            toast.error("Please sign in to create orders");
+            return;
+        }
+
         const price = parseFloat(newOrder.itemPrice);
         const quantity = parseInt(newOrder.quantity);
 
@@ -117,6 +130,7 @@ export default function OrderPage() {
                         quantity,
                     },
                 ],
+                userId: session.user.id,
             });
 
             setNewOrder({

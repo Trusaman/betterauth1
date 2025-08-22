@@ -49,7 +49,7 @@ export async function createOrder(data: CreateOrderData) {
 }
 
 export async function getOrders(userId?: string) {
-    const query = db
+    const baseQuery = db
         .select({
             id: orders.id,
             customerName: orders.customerName,
@@ -64,14 +64,15 @@ export async function getOrders(userId?: string) {
             },
         })
         .from(orders)
-        .leftJoin(orderItems, eq(orders.id, orderItems.orderId))
-        .orderBy(desc(orders.createdAt));
+        .leftJoin(orderItems, eq(orders.id, orderItems.orderId));
 
     if (userId) {
-        query.where(eq(orders.userId, userId));
+        return await baseQuery
+            .where(eq(orders.userId, userId))
+            .orderBy(desc(orders.createdAt));
     }
 
-    return await query;
+    return await baseQuery.orderBy(desc(orders.createdAt));
 }
 
 export async function updateOrderStatus(
