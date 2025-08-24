@@ -22,6 +22,13 @@
       "when": 1755761949781,
       "tag": "0002_fancy_power_pack",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1756005285535,
+      "tag": "0003_sticky_mastermind",
+      "breakpoints": true
     }
   ]
 }

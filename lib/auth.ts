@@ -5,7 +5,14 @@ import { schema } from "@/db/auth-schema";
 import { nextCookies } from "better-auth/next-js";
 import { admin as adminPlugin } from "better-auth/plugins";
 
-import { ac, accountant, manager, staff, admin } from "@/server/permissions";
+import {
+    ac,
+    accountant,
+    sales,
+    warehouse,
+    shipper,
+    admin,
+} from "@/server/permissions";
 
 export const auth = betterAuth({
     database: drizzleAdapter(db, {
@@ -21,7 +28,7 @@ export const auth = betterAuth({
         nextCookies(),
         adminPlugin({
             ac,
-            roles: { staff, manager, accountant, admin },
+            roles: { sales, accountant, warehouse, shipper, admin },
         }),
     ],
 });
