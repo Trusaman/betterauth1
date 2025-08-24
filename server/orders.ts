@@ -12,6 +12,8 @@ import { headers } from "next/headers";
 import { eq, and, desc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { storeChangeHistory } from "@/lib/upstash";
+import { createNotification } from "@/server/notifications";
+import { sendToUser, sendToRole, broadcast } from "@/app/api/sse/route";
 
 // Type definitions
 export type OrderStatus =
@@ -68,27 +70,6 @@ async function createOrderHistory(
         reason,
         notes,
         fieldChanges: fieldChanges ? JSON.stringify(fieldChanges) : null,
-    });
-}
-
-// Create notification
-async function createNotification(
-    userId: string,
-    title: string,
-    message: string,
-    orderId?: string,
-    type:
-        | "order_status"
-        | "comment"
-        | "assignment"
-        | "reminder" = "order_status"
-) {
-    await db.insert(notifications).values({
-        userId,
-        title,
-        message,
-        type,
-        orderId,
     });
 }
 
@@ -404,6 +385,32 @@ export async function approveOrder(orderId: string) {
                 `Your order ${order.orderNumber} has been approved by the accountant.`,
                 orderId
             );
+        }
+
+        // Send real-time update
+        try {
+            await sendToUser(order.createdBy!, {
+                type: "order_status_changed",
+                data: {
+                    orderId,
+                    newStatus: "approved",
+                    orderNumber: order.orderNumber,
+                },
+                timestamp: new Date().toISOString(),
+            });
+
+            // Notify warehouse users about new approved order
+            await sendToRole("warehouse", {
+                type: "order_status_changed",
+                data: {
+                    orderId,
+                    newStatus: "approved",
+                    orderNumber: order.orderNumber,
+                },
+                timestamp: new Date().toISOString(),
+            });
+        } catch (error) {
+            console.error("Failed to send real-time update:", error);
         }
 
         revalidatePath("/dashboard");
@@ -1035,5 +1042,353 @@ export async function failOrder(orderId: string, reason: string) {
     } catch (error) {
         console.error("Error marking order as failed:", error);
         return { success: false, message: "Failed to mark order as failed" };
+    }
+}
+
+// Get dashboard metrics for role-specific dashboards
+export async function getDashboardMetrics() {
+    try {
+        const session = await auth.api.getSession({
+            headers: await headers(),
+        });
+
+        if (!session) {
+            return { success: false, message: "Not authenticated" };
+        }
+
+        const userRole = session.user.role;
+        const userId = session.user.id;
+
+        // Base metrics for all roles
+        const allOrders = await db.query.orders.findMany({
+            with: {
+                orderItems: true,
+            },
+        });
+
+        const totalOrders = allOrders.length;
+        const pendingOrders = allOrders.filter(
+            (o) => o.status === "pending"
+        ).length;
+        const approvedOrders = allOrders.filter(
+            (o) => o.status === "approved"
+        ).length;
+        const rejectedOrders = allOrders.filter(
+            (o) => o.status === "rejected"
+        ).length;
+        const completedOrders = allOrders.filter(
+            (o) => o.status === "completed"
+        ).length;
+
+        const totalRevenue = allOrders
+            .filter((o) => o.status === "completed")
+            .reduce((sum, order) => sum + parseFloat(order.total), 0);
+
+        const averageOrderValue =
+            completedOrders > 0 ? totalRevenue / completedOrders : 0;
+
+        // Role-specific metrics
+        let roleSpecificMetrics = {};
+        let priorityOrders: any[] = [];
+
+        // Common date calculation for monthly metrics
+        const thisMonth = new Date();
+        thisMonth.setDate(1);
+
+        switch (userRole) {
+            case "sales":
+                const myOrders = allOrders.filter(
+                    (o) => o.createdBy === userId
+                );
+
+                const monthlyOrders = myOrders.filter(
+                    (o) => new Date(o.createdAt) >= thisMonth
+                );
+
+                const monthlyRevenue = monthlyOrders
+                    .filter((o) => o.status === "completed")
+                    .reduce((sum, order) => sum + parseFloat(order.total), 0);
+
+                const conversionRate =
+                    myOrders.length > 0
+                        ? (myOrders.filter((o) => o.status !== "rejected")
+                              .length /
+                              myOrders.length) *
+                          100
+                        : 0;
+
+                roleSpecificMetrics = {
+                    myOrders: myOrders.length,
+                    monthlyOrders: monthlyOrders.length,
+                    monthlyRevenue: monthlyRevenue.toFixed(2),
+                    conversionRate: conversionRate.toFixed(1),
+                };
+
+                priorityOrders = myOrders
+                    .filter((o) => o.status === "pending")
+                    .slice(0, 5);
+                break;
+
+            case "accountant":
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+
+                const approvedToday = allOrders.filter(
+                    (o) =>
+                        o.status === "approved" &&
+                        o.approvedAt &&
+                        new Date(o.approvedAt) >= today
+                ).length;
+
+                const pendingValue = allOrders
+                    .filter((o) => o.status === "pending")
+                    .reduce((sum, order) => sum + parseFloat(order.total), 0);
+
+                const totalReviewed = allOrders.filter(
+                    (o) => o.status === "approved" || o.status === "rejected"
+                ).length;
+
+                const approvalRate =
+                    totalReviewed > 0
+                        ? (approvedOrders / totalReviewed) * 100
+                        : 0;
+
+                roleSpecificMetrics = {
+                    approvedToday,
+                    pendingValue: pendingValue.toFixed(2),
+                    approvalRate: approvalRate.toFixed(1),
+                };
+
+                priorityOrders = allOrders
+                    .filter((o) => o.status === "pending")
+                    .sort((a, b) => parseFloat(b.total) - parseFloat(a.total))
+                    .slice(0, 5);
+                break;
+
+            case "warehouse":
+                const readyToShip = allOrders.filter(
+                    (o) => o.status === "approved"
+                ).length;
+
+                const confirmedToday = allOrders.filter(
+                    (o) =>
+                        o.status === "warehouse_confirmed" &&
+                        o.warehouseConfirmedAt &&
+                        new Date(o.warehouseConfirmedAt) >= today
+                ).length;
+
+                // Mock inventory alerts - in real app, this would come from inventory system
+                const inventoryAlerts = 3;
+
+                // Calculate average processing time (mock data)
+                const avgProcessingTime = 2.5;
+
+                roleSpecificMetrics = {
+                    readyToShip,
+                    confirmedToday,
+                    inventoryAlerts,
+                    avgProcessingTime,
+                };
+
+                priorityOrders = allOrders
+                    .filter((o) => o.status === "approved")
+                    .slice(0, 5);
+                break;
+
+            case "shipper":
+                const readyToShipShipper = allOrders.filter(
+                    (o) => o.status === "warehouse_confirmed"
+                ).length;
+                const inTransit = allOrders.filter(
+                    (o) => o.status === "shipped"
+                ).length;
+
+                const deliveredToday = allOrders.filter(
+                    (o) =>
+                        o.status === "completed" &&
+                        o.completedAt &&
+                        new Date(o.completedAt) >= today
+                ).length;
+
+                const totalShipped = allOrders.filter(
+                    (o) => o.status === "completed" || o.status === "failed"
+                ).length;
+
+                const deliveryRate =
+                    totalShipped > 0
+                        ? (completedOrders / totalShipped) * 100
+                        : 0;
+
+                roleSpecificMetrics = {
+                    readyToShip: readyToShipShipper,
+                    inTransit,
+                    deliveredToday,
+                    deliveryRate: deliveryRate.toFixed(1),
+                };
+
+                priorityOrders = allOrders
+                    .filter(
+                        (o) =>
+                            o.status === "warehouse_confirmed" ||
+                            o.status === "shipped"
+                    )
+                    .slice(0, 5);
+                break;
+
+            default: // admin
+                const activeUsers = 25; // Mock data
+                roleSpecificMetrics = {
+                    activeUsers,
+                    monthlyOrders: allOrders.filter(
+                        (o) => new Date(o.createdAt) >= thisMonth
+                    ).length,
+                };
+
+                priorityOrders = allOrders
+                    .filter((o) =>
+                        ["pending", "approved", "warehouse_confirmed"].includes(
+                            o.status
+                        )
+                    )
+                    .slice(0, 5);
+                break;
+        }
+
+        // Get recent activity from order history
+        const recentActivity = await db.query.orderHistory.findMany({
+            limit: 10,
+            orderBy: (history, { desc }) => [desc(history.createdAt)],
+            with: {
+                order: {
+                    columns: {
+                        orderNumber: true,
+                    },
+                },
+                performedByUser: {
+                    columns: {
+                        name: true,
+                    },
+                },
+            },
+        });
+
+        const formattedActivity = recentActivity.map((activity) => ({
+            id: activity.id,
+            type: activity.action,
+            description: `${activity.performedByUser?.name || "Unknown"} ${activity.action.replace("_", " ")} order ${activity.order?.orderNumber}`,
+            timestamp: activity.createdAt.toISOString(),
+            orderId: activity.orderId,
+            orderNumber: activity.order?.orderNumber,
+        }));
+
+        return {
+            success: true,
+            metrics: {
+                totalOrders,
+                pendingOrders,
+                approvedOrders,
+                rejectedOrders,
+                completedOrders,
+                totalRevenue: totalRevenue.toFixed(2),
+                averageOrderValue: averageOrderValue.toFixed(2),
+                recentActivity: formattedActivity,
+                roleSpecificMetrics,
+            },
+            priorityOrders: priorityOrders.map((order) => ({
+                id: order.id,
+                orderNumber: order.orderNumber,
+                customerName: order.customerName,
+                total: order.total,
+                status: order.status,
+                createdAt: order.createdAt.toISOString(),
+                urgency:
+                    parseFloat(order.total) > 1000
+                        ? "high"
+                        : parseFloat(order.total) > 500
+                          ? "medium"
+                          : "low",
+            })),
+        };
+    } catch (error) {
+        console.error("Error fetching dashboard metrics:", error);
+        return { success: false, message: "Failed to fetch dashboard metrics" };
+    }
+}
+
+// Get order by ID with full details
+export async function getOrderById(orderId: string) {
+    try {
+        const session = await auth.api.getSession({
+            headers: await headers(),
+        });
+
+        if (!session) {
+            return { success: false, message: "Not authenticated" };
+        }
+
+        const order = await db.query.orders.findFirst({
+            where: eq(orders.id, orderId),
+            with: {
+                orderItems: true,
+                createdByUser: {
+                    columns: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        role: true,
+                    },
+                },
+                approvedByUser: {
+                    columns: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        role: true,
+                    },
+                },
+            },
+        });
+
+        if (!order) {
+            return { success: false, message: "Order not found" };
+        }
+
+        return { success: true, order };
+    } catch (error) {
+        console.error("Error fetching order:", error);
+        return { success: false, message: "Failed to fetch order" };
+    }
+}
+
+// Get order history with user details
+export async function getOrderHistory(orderId: string) {
+    try {
+        const session = await auth.api.getSession({
+            headers: await headers(),
+        });
+
+        if (!session) {
+            return { success: false, message: "Not authenticated" };
+        }
+
+        const history = await db.query.orderHistory.findMany({
+            where: eq(orderHistory.orderId, orderId),
+            orderBy: [desc(orderHistory.createdAt)],
+            with: {
+                performedByUser: {
+                    columns: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        role: true,
+                    },
+                },
+            },
+        });
+
+        return { success: true, history };
+    } catch (error) {
+        console.error("Error fetching order history:", error);
+        return { success: false, message: "Failed to fetch order history" };
     }
 }
