@@ -1015,6 +1015,47 @@ export async function completeOrder(orderId: string, completionNotes?: string) {
             );
         }
 
+        // Notify admins about completion (bulk insert + SSE)
+        try {
+            const admins = await db.query.user.findMany({
+                where: (user, { eq }) => eq(user.role, "admin"),
+            });
+
+            if (admins.length > 0) {
+                const adminNotifs = await db
+                    .insert(notifications)
+                    .values(
+                        admins.map((admin) => ({
+                            userId: admin.id,
+                            title: "Order Completed",
+                            message: `Order ${order.orderNumber} has been marked as completed`,
+                            type: "order_status" as const,
+                            orderId,
+                        }))
+                    )
+                    .returning();
+
+                for (const n of adminNotifs) {
+                    await sendToUser(n.userId, {
+                        type: "new_notification",
+                        data: {
+                            id: n.id,
+                            userId: n.userId,
+                            title: n.title,
+                            message: n.message,
+                            type: n.type,
+                            orderId: n.orderId,
+                            isRead: !!n.isRead,
+                            createdAt: n.createdAt,
+                        },
+                        timestamp: new Date().toISOString(),
+                    });
+                }
+            }
+        } catch (e) {
+            console.warn("Failed to notify admins about completion", e);
+        }
+
         revalidatePath("/dashboard");
         return {
             success: true,
@@ -1132,6 +1173,263 @@ export async function failOrder(orderId: string, reason: string) {
     } catch (error) {
         console.error("Error marking order as failed:", error);
         return { success: false, message: "Failed to mark order as failed" };
+    }
+}
+
+// Partial complete order (Shipper role)
+export async function partialCompleteOrder(orderId: string, notes?: string) {
+    try {
+        const session = await auth.api.getSession({ headers: await headers() });
+        if (!session) return { success: false, message: "Not authenticated" };
+
+        const { success: hasPermission } = await auth.api.userHasPermission({
+            body: {
+                userId: session.user.id,
+                permissions: { order: ["update"] },
+            },
+        });
+        if (!hasPermission)
+            return { success: false, message: "Insufficient permissions" };
+
+        const [order] = await db
+            .select()
+            .from(orders)
+            .where(eq(orders.id, orderId));
+        if (!order) return { success: false, message: "Order not found" };
+
+        if (order.status !== "shipped") {
+            return {
+                success: false,
+                message:
+                    "Order must be shipped before marking as partial complete",
+            };
+        }
+
+        await db
+            .update(orders)
+            .set({
+                status: "partial_complete",
+                completionNotes: notes || null,
+                updatedBy: session.user.id,
+            })
+            .where(eq(orders.id, orderId));
+
+        await createOrderHistory(
+            orderId,
+            "status_changed",
+            session.user.id,
+            "shipped",
+            "partial_complete",
+            notes,
+            `Order partially completed by shipper${notes ? `: ${notes}` : ""}`
+        );
+
+        await storeChangeHistory({
+            entityType: "order",
+            entityId: orderId,
+            action: "order_partial_completed",
+            changes: {
+                status: { from: "shipped", to: "partial_complete" },
+                completionNotes: notes || null,
+            },
+            performedBy: session.user.id,
+            metadata: {
+                userRole: session.user.role,
+                orderNumber: order.orderNumber,
+            },
+        });
+
+        // Notify order creator
+        if (order.createdBy) {
+            await db.insert(notifications).values({
+                userId: order.createdBy,
+                title: "Order Partially Completed",
+                message: `Your order ${
+                    order.orderNumber
+                } has been partially completed${
+                    notes ? `. Notes: ${notes}` : ""
+                }.`,
+                type: "order_status",
+                orderId,
+            });
+        }
+
+        // Notify admins
+        try {
+            const admins = await db.query.user.findMany({
+                where: (user, { eq }) => eq(user.role, "admin"),
+            });
+            if (admins.length > 0) {
+                const adminNotifs = await db
+                    .insert(notifications)
+                    .values(
+                        admins.map((admin) => ({
+                            userId: admin.id,
+                            title: "Order Partially Completed",
+                            message: `Order ${order.orderNumber} has been marked as partially completed`,
+                            type: "order_status" as const,
+                            orderId,
+                        }))
+                    )
+                    .returning();
+
+                for (const n of adminNotifs) {
+                    await sendToUser(n.userId, {
+                        type: "new_notification",
+                        data: {
+                            id: n.id,
+                            userId: n.userId,
+                            title: n.title,
+                            message: n.message,
+                            type: n.type,
+                            orderId: n.orderId,
+                            isRead: !!n.isRead,
+                            createdAt: n.createdAt,
+                        },
+                        timestamp: new Date().toISOString(),
+                    });
+                }
+            }
+        } catch (e) {
+            console.warn("Failed to notify admins about partial completion", e);
+        }
+
+        revalidatePath("/dashboard");
+        return {
+            success: true,
+            message: "Order marked as partially completed",
+        };
+    } catch (error) {
+        console.error("Error marking order as partially completed:", error);
+        return {
+            success: false,
+            message: "Failed to mark order as partially completed",
+        };
+    }
+}
+
+// Cancel order (Admin/Accountant role)
+export async function cancelOrder(orderId: string, reason?: string) {
+    try {
+        const session = await auth.api.getSession({ headers: await headers() });
+        if (!session) return { success: false, message: "Not authenticated" };
+
+        const { success: hasPermission } = await auth.api.userHasPermission({
+            body: {
+                userId: session.user.id,
+                permissions: { order: ["update"] },
+            },
+        });
+        if (!hasPermission)
+            return { success: false, message: "Insufficient permissions" };
+
+        const [order] = await db
+            .select()
+            .from(orders)
+            .where(eq(orders.id, orderId));
+        if (!order) return { success: false, message: "Order not found" };
+
+        if (["completed", "failed", "cancelled"].includes(order.status)) {
+            return {
+                success: false,
+                message: `Cannot cancel an order in status '${order.status}'`,
+            };
+        }
+
+        await db
+            .update(orders)
+            .set({
+                status: "cancelled",
+                cancellationReason: reason || null,
+                updatedBy: session.user.id,
+            })
+            .where(eq(orders.id, orderId));
+
+        await createOrderHistory(
+            orderId,
+            "status_changed",
+            session.user.id,
+            order.status,
+            "cancelled",
+            reason,
+            `Order cancelled${reason ? `: ${reason}` : ""}`
+        );
+
+        await storeChangeHistory({
+            entityType: "order",
+            entityId: orderId,
+            action: "order_cancelled",
+            changes: {
+                status: { from: order.status, to: "cancelled" },
+                reason: reason || null,
+            },
+            performedBy: session.user.id,
+            metadata: {
+                userRole: session.user.role,
+                orderNumber: order.orderNumber,
+            },
+        });
+
+        // Notify order creator
+        if (order.createdBy) {
+            await db.insert(notifications).values({
+                userId: order.createdBy,
+                title: "Order Cancelled",
+                message: `Your order ${order.orderNumber} has been cancelled${
+                    reason ? `. Reason: ${reason}` : ""
+                }.`,
+                type: "order_status",
+                orderId,
+            });
+        }
+
+        // Notify admins
+        try {
+            const admins = await db.query.user.findMany({
+                where: (user, { eq }) => eq(user.role, "admin"),
+            });
+            if (admins.length > 0) {
+                const adminNotifs = await db
+                    .insert(notifications)
+                    .values(
+                        admins.map((admin) => ({
+                            userId: admin.id,
+                            title: "Order Cancelled",
+                            message: `Order ${
+                                order.orderNumber
+                            } has been cancelled${reason ? `: ${reason}` : ""}`,
+                            type: "order_status" as const,
+                            orderId,
+                        }))
+                    )
+                    .returning();
+
+                for (const n of adminNotifs) {
+                    await sendToUser(n.userId, {
+                        type: "new_notification",
+                        data: {
+                            id: n.id,
+                            userId: n.userId,
+                            title: n.title,
+                            message: n.message,
+                            type: n.type,
+                            orderId: n.orderId,
+                            isRead: !!n.isRead,
+                            createdAt: n.createdAt,
+                        },
+                        timestamp: new Date().toISOString(),
+                    });
+                }
+            }
+        } catch (e) {
+            console.warn("Failed to notify admins about cancellation", e);
+        }
+
+        revalidatePath("/dashboard");
+        return { success: true, message: "Order cancelled successfully" };
+    } catch (error) {
+        console.error("Error cancelling order:", error);
+        return { success: false, message: "Failed to cancel order" };
     }
 }
 
