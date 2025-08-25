@@ -4,7 +4,12 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
 
 interface RealTimeUpdate {
-    type: "order_status_changed" | "new_comment" | "new_notification" | "order_created" | "order_updated";
+    type:
+        | "order_status_changed"
+        | "new_comment"
+        | "new_notification"
+        | "order_created"
+        | "order_updated";
     data: any;
     timestamp: string;
 }
@@ -38,124 +43,160 @@ export function useRealTimeUpdates({
 
     // Request browser notification permission
     const requestNotificationPermission = useCallback(async () => {
-        if (!enableBrowserNotifications || typeof window === "undefined") return;
-        
+        if (!enableBrowserNotifications || typeof window === "undefined")
+            return;
+
         if ("Notification" in window && Notification.permission === "default") {
             try {
                 await Notification.requestPermission();
             } catch (error) {
-                console.warn("Failed to request notification permission:", error);
+                console.warn(
+                    "Failed to request notification permission:",
+                    error
+                );
             }
         }
     }, [enableBrowserNotifications]);
 
     // Show browser notification
-    const showBrowserNotification = useCallback((title: string, message: string, orderId?: string) => {
-        if (!enableBrowserNotifications || typeof window === "undefined") return;
-        
-        if ("Notification" in window && Notification.permission === "granted") {
-            const notification = new Notification(title, {
-                body: message,
-                icon: "/favicon.ico",
-                badge: "/favicon.ico",
-                tag: orderId || "general",
-                requireInteraction: false,
-                silent: false,
-            });
+    const showBrowserNotification = useCallback(
+        (title: string, message: string, orderId?: string) => {
+            if (!enableBrowserNotifications || typeof window === "undefined")
+                return;
 
-            notification.onclick = () => {
-                window.focus();
-                if (orderId) {
-                    // Navigate to order page
-                    window.location.href = `/order?id=${orderId}`;
-                }
-                notification.close();
-            };
+            if (
+                "Notification" in window &&
+                Notification.permission === "granted"
+            ) {
+                const notification = new Notification(title, {
+                    body: message,
+                    icon: "/favicon.ico",
+                    badge: "/favicon.ico",
+                    tag: orderId || "general",
+                    requireInteraction: false,
+                    silent: false,
+                });
 
-            // Auto close after 5 seconds
-            setTimeout(() => {
-                notification.close();
-            }, 5000);
-        }
-    }, [enableBrowserNotifications]);
+                notification.onclick = () => {
+                    window.focus();
+                    if (orderId) {
+                        // Navigate to order page
+                        window.location.href = `/order?id=${orderId}`;
+                    }
+                    notification.close();
+                };
+
+                // Auto close after 5 seconds
+                setTimeout(() => {
+                    notification.close();
+                }, 5000);
+            }
+        },
+        [enableBrowserNotifications]
+    );
 
     // Handle real-time updates
-    const handleUpdate = useCallback((update: RealTimeUpdate) => {
-        setLastUpdate(new Date());
+    const handleUpdate = useCallback(
+        (update: RealTimeUpdate) => {
+            setLastUpdate(new Date());
 
-        switch (update.type) {
-            case "order_status_changed":
-                const { orderId, newStatus, orderNumber } = update.data;
-                onOrderUpdate?.(orderId, newStatus);
-                
-                // Show toast notification
-                toast.success(`Order ${orderNumber} status changed to ${newStatus}`);
-                
-                // Show browser notification
-                showBrowserNotification(
-                    "Order Status Updated",
-                    `Order ${orderNumber} is now ${newStatus}`,
-                    orderId
-                );
-                break;
+            switch (update.type) {
+                case "order_status_changed":
+                    const { orderId, newStatus, orderNumber } = update.data;
+                    onOrderUpdate?.(orderId, newStatus);
 
-            case "new_comment":
-                const { orderId: commentOrderId, comment, orderNumber: commentOrderNumber } = update.data;
-                onNewComment?.(commentOrderId, comment);
-                
-                toast.info(`New comment on order ${commentOrderNumber}`);
-                showBrowserNotification(
-                    "New Comment",
-                    `${comment.user.name} commented on order ${commentOrderNumber}`,
-                    commentOrderId
-                );
-                break;
-
-            case "new_notification":
-                const notification = update.data;
-                onNewNotification?.(notification);
-                
-                toast.info(notification.title);
-                showBrowserNotification(
-                    notification.title,
-                    notification.message,
-                    notification.orderId
-                );
-                break;
-
-            case "order_created":
-                const newOrder = update.data;
-                onOrderCreated?.(newOrder);
-                
-                // Only show notification if user is not the creator
-                if (newOrder.createdBy !== userId) {
-                    toast.info(`New order ${newOrder.orderNumber} created`);
-                    showBrowserNotification(
-                        "New Order Created",
-                        `Order ${newOrder.orderNumber} by ${newOrder.customerName}`,
-                        newOrder.id
+                    // Show toast notification
+                    toast.success(
+                        `Order ${orderNumber} status changed to ${newStatus}`
                     );
-                }
-                break;
 
-            case "order_updated":
-                const updatedOrder = update.data;
-                toast.info(`Order ${updatedOrder.orderNumber} updated`);
-                break;
+                    // Show browser notification
+                    showBrowserNotification(
+                        "Order Status Updated",
+                        `Order ${orderNumber} is now ${newStatus}`,
+                        orderId
+                    );
+                    break;
 
-            default:
-                console.log("Unknown update type:", update.type);
-        }
-    }, [userId, onOrderUpdate, onNewComment, onNewNotification, onOrderCreated, showBrowserNotification]);
+                case "new_comment":
+                    const {
+                        orderId: commentOrderId,
+                        comment,
+                        orderNumber: commentOrderNumber,
+                    } = update.data;
+                    onNewComment?.(commentOrderId, comment);
+
+                    toast.info(`New comment on order ${commentOrderNumber}`);
+                    showBrowserNotification(
+                        "New Comment",
+                        `${comment.user.name} commented on order ${commentOrderNumber}`,
+                        commentOrderId
+                    );
+                    break;
+
+                case "new_notification":
+                    const notification = update.data;
+                    onNewNotification?.(notification);
+
+                    toast.info(notification.title);
+                    showBrowserNotification(
+                        notification.title,
+                        notification.message,
+                        notification.orderId
+                    );
+                    break;
+
+                case "order_created":
+                    const newOrder = update.data;
+                    onOrderCreated?.(newOrder);
+
+                    // Only show notification if user is not the creator
+                    if (newOrder.createdBy !== userId) {
+                        toast.info(`New order ${newOrder.orderNumber} created`);
+                        showBrowserNotification(
+                            "New Order Created",
+                            `Order ${newOrder.orderNumber} by ${newOrder.customerName}`,
+                            newOrder.id
+                        );
+                    }
+                    break;
+
+                case "order_updated":
+                    const updatedOrder = update.data;
+                    toast.info(`Order ${updatedOrder.orderNumber} updated`);
+                    break;
+
+                default:
+                    console.log("Unknown update type:", update.type);
+            }
+        },
+        [
+            userId,
+            onOrderUpdate,
+            onNewComment,
+            onNewNotification,
+            onOrderCreated,
+            showBrowserNotification,
+        ]
+    );
 
     // Connect to SSE endpoint
     const connect = useCallback(() => {
+        // Don't connect if userId is not available
+        if (!userId || userId.trim() === "") {
+            console.log("SSE connection skipped: userId not available");
+            return;
+        }
+
         if (eventSourceRef.current) {
             eventSourceRef.current.close();
         }
 
         try {
-            const eventSource = new EventSource(`/api/sse?userId=${userId}&userRole=${userRole}`);
+            console.log(
+                `Establishing SSE connection for user: ${userId} (${userRole})`
+            );
+            const eventSource = new EventSource(`/api/sse`);
             eventSourceRef.current = eventSource;
 
             eventSource.onopen = () => {
@@ -178,21 +219,24 @@ export function useRealTimeUpdates({
                 console.error("SSE connection error:", error);
                 setIsConnected(false);
                 setConnectionError("Connection lost");
-                
+
                 // Attempt to reconnect with exponential backoff
                 if (reconnectAttempts.current < maxReconnectAttempts) {
                     const delay = Math.pow(2, reconnectAttempts.current) * 1000; // 1s, 2s, 4s, 8s, 16s
                     reconnectAttempts.current++;
-                    
+
                     reconnectTimeoutRef.current = setTimeout(() => {
-                        console.log(`Attempting to reconnect (attempt ${reconnectAttempts.current})`);
+                        console.log(
+                            `Attempting to reconnect (attempt ${reconnectAttempts.current})`
+                        );
                         connect();
                     }, delay);
                 } else {
-                    setConnectionError("Failed to reconnect after multiple attempts");
+                    setConnectionError(
+                        "Failed to reconnect after multiple attempts"
+                    );
                 }
             };
-
         } catch (error) {
             console.error("Failed to create SSE connection:", error);
             setConnectionError("Failed to establish connection");
@@ -205,12 +249,12 @@ export function useRealTimeUpdates({
             eventSourceRef.current.close();
             eventSourceRef.current = null;
         }
-        
+
         if (reconnectTimeoutRef.current) {
             clearTimeout(reconnectTimeoutRef.current);
             reconnectTimeoutRef.current = null;
         }
-        
+
         setIsConnected(false);
         setConnectionError(null);
     }, []);
@@ -225,11 +269,19 @@ export function useRealTimeUpdates({
     // Initialize connection and request permissions
     useEffect(() => {
         requestNotificationPermission();
-        connect();
+
+        // Only connect if userId is available
+        if (userId && userId.trim() !== "") {
+            connect();
+        }
 
         // Handle page visibility changes
         const handleVisibilityChange = () => {
-            if (document.visibilityState === "visible" && !isConnected) {
+            if (
+                document.visibilityState === "visible" &&
+                !isConnected &&
+                userId
+            ) {
                 reconnect();
             }
         };
@@ -239,9 +291,12 @@ export function useRealTimeUpdates({
         // Cleanup on unmount
         return () => {
             disconnect();
-            document.removeEventListener("visibilitychange", handleVisibilityChange);
+            document.removeEventListener(
+                "visibilitychange",
+                handleVisibilityChange
+            );
         };
-    }, []);
+    }, [userId, userRole]); // Add userId and userRole as dependencies
 
     // Cleanup on unmount
     useEffect(() => {
@@ -265,15 +320,22 @@ export function useRealTimeOrders(initialOrders: any[] = []) {
     const [notifications, setNotifications] = useState<any[]>([]);
     const [unreadCount, setUnreadCount] = useState(0);
 
-    const handleOrderUpdate = useCallback((orderId: string, newStatus: string) => {
-        setOrders(prevOrders => 
-            prevOrders.map(order => 
-                order.id === orderId 
-                    ? { ...order, status: newStatus, updatedAt: new Date().toISOString() }
-                    : order
-            )
-        );
-    }, []);
+    const handleOrderUpdate = useCallback(
+        (orderId: string, newStatus: string) => {
+            setOrders((prevOrders) =>
+                prevOrders.map((order) =>
+                    order.id === orderId
+                        ? {
+                              ...order,
+                              status: newStatus,
+                              updatedAt: new Date().toISOString(),
+                          }
+                        : order
+                )
+            );
+        },
+        []
+    );
 
     const handleNewComment = useCallback((orderId: string, comment: any) => {
         // This could trigger a refresh of comments for the specific order
@@ -281,14 +343,14 @@ export function useRealTimeOrders(initialOrders: any[] = []) {
     }, []);
 
     const handleNewNotification = useCallback((notification: any) => {
-        setNotifications(prev => [notification, ...prev]);
+        setNotifications((prev) => [notification, ...prev]);
         if (!notification.isRead) {
-            setUnreadCount(prev => prev + 1);
+            setUnreadCount((prev) => prev + 1);
         }
     }, []);
 
     const handleOrderCreated = useCallback((newOrder: any) => {
-        setOrders(prevOrders => [newOrder, ...prevOrders]);
+        setOrders((prevOrders) => [newOrder, ...prevOrders]);
     }, []);
 
     return {

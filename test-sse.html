@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSE Connection Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .connected {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .connecting {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        .log {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            margin: 10px 0;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .log-entry {
+            margin: 2px 0;
+            padding: 2px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+        .timestamp {
+            color: #666;
+            font-size: 11px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .test-title {
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>SSE Connection Test</h1>
+        
+        <div class="test-section">
+            <div class="test-title">Connection Status</div>
+            <div id="status" class="status disconnected">Disconnected</div>
+            <button id="connectBtn" onclick="connect()">Connect</button>
+            <button id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
+            <button onclick="clearLog()">Clear Log</button>
+        </div>
+
+        <div class="test-section">
+            <div class="test-title">Connection Info</div>
+            <div>
+                <strong>URL:</strong> <span id="sseUrl">Not connected</span><br>
+                <strong>Ready State:</strong> <span id="readyState">-</span><br>
+                <strong>Last Message:</strong> <span id="lastMessage">None</span><br>
+                <strong>Message Count:</strong> <span id="messageCount">0</span>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <div class="test-title">Message Log</div>
+            <div id="log" class="log">
+                <div class="log-entry">
+                    <span class="timestamp">[Ready]</span> SSE test page loaded. Click Connect to start.
+                </div>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <div class="test-title">Test Instructions</div>
+            <ol>
+                <li>Make sure you're logged into the application in another tab</li>
+                <li>Click "Connect" to establish SSE connection</li>
+                <li>Check the logs for connection establishment and heartbeat messages</li>
+                <li>Create or update orders in the application to test real-time notifications</li>
+                <li>Verify that notifications appear in the log</li>
+            </ol>
+        </div>
+    </div>
+
+    <script>
+        let eventSource = null;
+        let messageCount = 0;
+
+        function updateStatus(status, className) {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = status;
+            statusEl.className = `status ${className}`;
+        }
+
+        function updateConnectionInfo() {
+            document.getElementById('sseUrl').textContent = eventSource ? '/api/sse' : 'Not connected';
+            document.getElementById('readyState').textContent = eventSource ? getReadyStateText(eventSource.readyState) : '-';
+        }
+
+        function getReadyStateText(readyState) {
+            switch(readyState) {
+                case EventSource.CONNECTING: return 'CONNECTING (0)';
+                case EventSource.OPEN: return 'OPEN (1)';
+                case EventSource.CLOSED: return 'CLOSED (2)';
+                default: return `UNKNOWN (${readyState})`;
+            }
+        }
+
+        function addLogEntry(message, type = 'info') {
+            const log = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `<span class="timestamp">[${timestamp}]</span> ${message}`;
+            log.appendChild(entry);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        function connect() {
+            if (eventSource) {
+                eventSource.close();
+            }
+
+            updateStatus('Connecting...', 'connecting');
+            addLogEntry('Attempting to connect to SSE endpoint...');
+
+            eventSource = new EventSource('/api/sse');
+
+            eventSource.onopen = function(event) {
+                updateStatus('Connected', 'connected');
+                addLogEntry('✅ SSE connection opened successfully', 'success');
+                updateConnectionInfo();
+                document.getElementById('connectBtn').disabled = true;
+                document.getElementById('disconnectBtn').disabled = false;
+            };
+
+            eventSource.onmessage = function(event) {
+                messageCount++;
+                document.getElementById('messageCount').textContent = messageCount;
+                document.getElementById('lastMessage').textContent = new Date().toLocaleTimeString();
+                
+                try {
+                    const data = JSON.parse(event.data);
+                    addLogEntry(`📨 Message received: ${data.type} - ${JSON.stringify(data.data)}`, 'message');
+                } catch (e) {
+                    addLogEntry(`📨 Raw message: ${event.data}`, 'message');
+                }
+                updateConnectionInfo();
+            };
+
+            eventSource.onerror = function(event) {
+                updateStatus('Connection Error', 'disconnected');
+                addLogEntry('❌ SSE connection error occurred', 'error');
+                updateConnectionInfo();
+                document.getElementById('connectBtn').disabled = false;
+                document.getElementById('disconnectBtn').disabled = true;
+            };
+
+            updateConnectionInfo();
+        }
+
+        function disconnect() {
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
+            updateStatus('Disconnected', 'disconnected');
+            addLogEntry('🔌 SSE connection closed');
+            updateConnectionInfo();
+            document.getElementById('connectBtn').disabled = false;
+            document.getElementById('disconnectBtn').disabled = true;
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '<div class="log-entry"><span class="timestamp">[Cleared]</span> Log cleared</div>';
+            messageCount = 0;
+            document.getElementById('messageCount').textContent = '0';
+            document.getElementById('lastMessage').textContent = 'None';
+        }
+
+        // Auto-connect on page load if we're on the same domain
+        window.addEventListener('load', function() {
+            addLogEntry('Page loaded. Ready to test SSE connection.');
+        });
+    </script>
+</body>
+</html>

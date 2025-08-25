@@ -21,10 +21,9 @@ export async function getOrderComments(orderId: string) {
         }
 
         // Check if user has access to this order
-        const [order] = await db
-            .select()
-            .from(orders)
-            .where(eq(orders.id, orderId));
+        const order = await db.query.orders.findFirst({
+            where: (orders, { eq }) => eq(orders.id, orderId),
+        });
 
         if (!order) {
             return { success: false, message: "Order not found" };
@@ -32,8 +31,11 @@ export async function getOrderComments(orderId: string) {
 
         // Get comments with user information
         const comments = await db.query.orderComments.findMany({
-            where: eq(orderComments.orderId, orderId),
-            orderBy: [desc(orderComments.createdAt)],
+            where: (orderComments, { eq }) =>
+                eq(orderComments.orderId, orderId),
+            orderBy: (orderComments, { desc }) => [
+                desc(orderComments.createdAt),
+            ],
             with: {
                 author: {
                     columns: {
@@ -70,10 +72,9 @@ export async function addOrderComment(
         }
 
         // Check if user has access to this order
-        const [order] = await db
-            .select()
-            .from(orders)
-            .where(eq(orders.id, orderId));
+        const order = await db.query.orders.findFirst({
+            where: (orders, { eq }) => eq(orders.id, orderId),
+        });
 
         if (!order) {
             return { success: false, message: "Order not found" };
@@ -81,15 +82,13 @@ export async function addOrderComment(
 
         // Validate parent comment if provided
         if (parentCommentId) {
-            const [parentComment] = await db
-                .select()
-                .from(orderComments)
-                .where(
+            const parentComment = await db.query.orderComments.findFirst({
+                where: (orderComments, { eq, and }) =>
                     and(
                         eq(orderComments.id, parentCommentId),
                         eq(orderComments.orderId, orderId)
-                    )
-                );
+                    ),
+            });
 
             if (!parentComment) {
                 return { success: false, message: "Parent comment not found" };
@@ -291,7 +290,9 @@ async function notifyUsersAboutComment(
                 await createNotification(
                     order.createdBy,
                     "New Comment on Order",
-                    `${commenter.name} added a ${isInternal ? "internal " : ""}comment on order ${order.orderNumber}`,
+                    `${commenter.name} added a ${
+                        isInternal ? "internal " : ""
+                    }comment on order ${order.orderNumber}`,
                     order.id
                 );
             }
@@ -327,7 +328,9 @@ async function notifyUsersAboutComment(
                     await createNotification(
                         otherComment.authorId,
                         "New Comment on Order",
-                        `${commenter.name} added a ${isInternal ? "internal " : ""}comment on order ${order.orderNumber}`,
+                        `${commenter.name} added a ${
+                            isInternal ? "internal " : ""
+                        }comment on order ${order.orderNumber}`,
                         order.id
                     );
                 }

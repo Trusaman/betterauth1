@@ -162,17 +162,95 @@ export async function createOrder(data: CreateOrderData) {
             },
         });
 
-        // Notify accountants about new order
+        // Notify creator (sales) that order was created (visible in their NotificationCenter)
+        try {
+            const [creatorNotification] = await db
+                .insert(notifications)
+                .values({
+                    userId: session.user.id,
+                    title: "Order Created",
+                    message: `Order ${newOrder.orderNumber} has been created and is pending approval`,
+                    type: "order_status",
+                    orderId: newOrder.id,
+                })
+                .returning();
+
+            await sendToUser(session.user.id, {
+                type: "new_notification",
+                data: {
+                    id: creatorNotification.id,
+                    userId: creatorNotification.userId,
+                    title: creatorNotification.title,
+                    message: creatorNotification.message,
+                    type: creatorNotification.type,
+                    orderId: creatorNotification.orderId,
+                    isRead: !!creatorNotification.isRead,
+                    createdAt: creatorNotification.createdAt,
+                },
+                timestamp: new Date().toISOString(),
+            });
+        } catch (e) {
+            console.warn("Failed to notify creator about order creation", e);
+        }
+
+        // Notify accountants about new order and send real-time events with proper IDs
         const accountants = await db.query.user.findMany({
             where: (user, { eq }) => eq(user.role, "accountant"),
         });
 
-        for (const accountant of accountants) {
-            await createNotification(
-                accountant.id,
-                "New Order Pending Approval",
-                `Order ${newOrder.orderNumber} from ${data.customerName} is pending your approval.`,
-                newOrder.id
+        // Create notifications in bulk and return inserted rows (guard empty)
+        let insertedNotifications: any[] = [];
+        if (accountants.length > 0) {
+            insertedNotifications = await db
+                .insert(notifications)
+                .values(
+                    accountants.map((accountant) => ({
+                        userId: accountant.id,
+                        title: "New Order Pending Approval",
+                        message: `Order ${newOrder.orderNumber} from ${data.customerName} is pending your approval.`,
+                        type: "order_status" as const,
+                        orderId: newOrder.id,
+                    }))
+                )
+                .returning();
+        }
+
+        // Send real-time update for order creation (role-based)
+        try {
+            await sendToRole("accountant", {
+                type: "order_created",
+                data: {
+                    id: newOrder.id,
+                    orderNumber: newOrder.orderNumber,
+                    customerName: data.customerName,
+                    total: total,
+                    status: "pending",
+                    createdBy: session.user.id,
+                },
+                timestamp: new Date().toISOString(),
+            });
+
+            // Send real-time notification events with IDs to each accountant
+            for (const n of insertedNotifications) {
+                await sendToUser(n.userId, {
+                    type: "new_notification",
+                    data: {
+                        id: n.id,
+                        userId: n.userId,
+                        title: n.title,
+                        message: n.message,
+                        type: n.type,
+                        orderId: n.orderId,
+                        isRead: !!n.isRead,
+                        createdAt: n.createdAt,
+                    },
+                    timestamp: new Date().toISOString(),
+                });
+            }
+        } catch (error) {
+            console.error(
+                "Failed to send real-time update for order creation:",
+                error
             );
         }
 
@@ -792,7 +870,9 @@ export async function shipOrder(
             "warehouse_confirmed",
             "shipped",
             undefined,
-            `Order shipped by shipper${trackingNumber ? ` with tracking: ${trackingNumber}` : ""}`
+            `Order shipped by shipper${
+                trackingNumber ? ` with tracking: ${trackingNumber}` : ""
+            }`
         );
 
         // Store change history in Upstash
@@ -819,7 +899,11 @@ export async function shipOrder(
             await createNotification(
                 order.createdBy,
                 "Order Shipped",
-                `Your order ${order.orderNumber} has been shipped${trackingNumber ? ` with tracking number: ${trackingNumber}` : ""}.`,
+                `Your order ${order.orderNumber} has been shipped${
+                    trackingNumber
+                        ? ` with tracking number: ${trackingNumber}`
+                        : ""
+                }.`,
                 orderId
             );
         }
@@ -895,7 +979,9 @@ export async function completeOrder(orderId: string, completionNotes?: string) {
             "shipped",
             "completed",
             undefined,
-            `Order completed by shipper${completionNotes ? `: ${completionNotes}` : ""}`
+            `Order completed by shipper${
+                completionNotes ? `: ${completionNotes}` : ""
+            }`
         );
 
         // Store change history in Upstash
@@ -920,7 +1006,11 @@ export async function completeOrder(orderId: string, completionNotes?: string) {
             await createNotification(
                 order.createdBy,
                 "Order Completed",
-                `Your order ${order.orderNumber} has been completed successfully${completionNotes ? `. Notes: ${completionNotes}` : ""}.`,
+                `Your order ${
+                    order.orderNumber
+                } has been completed successfully${
+                    completionNotes ? `. Notes: ${completionNotes}` : ""
+                }.`,
                 orderId
             );
         }
@@ -1275,7 +1365,11 @@ export async function getDashboardMetrics() {
         const formattedActivity = recentActivity.map((activity) => ({
             id: activity.id,
             type: activity.action,
-            description: `${activity.performedByUser?.name || "Unknown"} ${activity.action.replace("_", " ")} order ${activity.order?.orderNumber}`,
+            description: `${
+                activity.performedByUser?.name || "Unknown"
+            } ${activity.action.replace("_", " ")} order ${
+                activity.order?.orderNumber
+            }`,
             timestamp: activity.createdAt.toISOString(),
             orderId: activity.orderId,
             orderNumber: activity.order?.orderNumber,
@@ -1305,8 +1399,8 @@ export async function getDashboardMetrics() {
                     parseFloat(order.total) > 1000
                         ? "high"
                         : parseFloat(order.total) > 500
-                          ? "medium"
-                          : "low",
+                        ? "medium"
+                        : "low",
             })),
         };
     } catch (error) {

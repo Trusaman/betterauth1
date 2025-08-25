@@ -4,20 +4,20 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { getDashboardMetrics } from "@/server/orders";
-// import { getNotifications } from "@/server/notifications";
+import { getNotifications } from "@/server/notifications";
 import { toast } from "sonner";
 import { RoleSpecificDashboard } from "@/components/dashboard/role-specific-dashboard";
-// import { NotificationCenter } from "@/components/notifications/notification-center";
+import { NotificationCenter } from "@/components/notifications/notification-center";
 import {
     useRealTimeUpdates,
     useRealTimeOrders,
 } from "@/hooks/use-real-time-updates";
-// import {
-//     markNotificationAsRead,
-//     markAllNotificationsAsRead,
-//     deleteNotification,
-//     clearAllNotifications,
-// } from "@/server/notifications";
+import {
+    markNotificationAsRead,
+    markAllNotificationsAsRead,
+    deleteNotification,
+    clearAllNotifications,
+} from "@/server/notifications";
 import { Plus, Package, CheckCircle, Truck, BarChart3 } from "lucide-react";
 import LogoutButton from "@/components/logout-button";
 
@@ -42,14 +42,14 @@ export default function Dashboard() {
         handleOrderCreated,
     } = useRealTimeOrders();
 
-    // const { isConnected } = useRealTimeUpdates({
-    //     userId,
-    //     userRole,
-    //     onOrderUpdate: handleOrderUpdate,
-    //     onNewComment: handleNewComment,
-    //     onNewNotification: handleNewNotification,
-    //     onOrderCreated: handleOrderCreated,
-    // });
+    const { isConnected } = useRealTimeUpdates({
+        userId,
+        userRole,
+        onOrderUpdate: handleOrderUpdate,
+        onNewComment: handleNewComment,
+        onNewNotification: handleNewNotification,
+        onOrderCreated: handleOrderCreated,
+    });
 
     const loadUserInfo = async () => {
         try {
@@ -57,9 +57,9 @@ export default function Dashboard() {
             console.log("session", session);
 
             if (session?.user) {
-                setUserRole(session.user.role);
+                setUserRole(session.user.role || "");
                 setUserId(session.user.id);
-                setUserName(session.user.name || session.user.email);
+                setUserName(session.user.name || "");
             } else {
                 router.push("/login");
 
@@ -76,17 +76,17 @@ export default function Dashboard() {
     const loadDashboardData = async () => {
         try {
             const metricsResult = await getDashboardMetrics();
-            // const notificationsResult = await getNotifications();
+            const notificationsResult = await getNotifications();
 
             if (metricsResult.success) {
                 setMetrics(metricsResult.metrics);
                 setPriorityOrders(metricsResult.priorityOrders || []);
             }
 
-            // if (notificationsResult.success) {
-            //     setNotifications(notificationsResult.notifications || []);
-            //     setUnreadCount(notificationsResult.unreadCount || 0);
-            // }
+            if (notificationsResult.success) {
+                setNotifications(notificationsResult.notifications || []);
+                setUnreadCount(notificationsResult.unreadCount || 0);
+            }
         } catch (error) {
             console.error("Failed to load dashboard data:", error);
             toast.error("Failed to load dashboard data");
@@ -162,28 +162,6 @@ export default function Dashboard() {
         }
     };
 
-    // const handleMarkAsRead = async (notificationId: string) => {
-    //     const result = await markNotificationAsRead(notificationId);
-    //     if (result.success) {
-    //         setNotifications((prev) =>
-    //             prev.map((n) =>
-    //                 n.id === notificationId ? { ...n, isRead: true } : n
-    //             )
-    //         );
-    //         setUnreadCount((prev) => Math.max(0, prev - 1));
-    //     }
-    // };
-
-    // const handleMarkAllAsRead = async () => {
-    //     const result = await markAllNotificationsAsRead();
-    //     if (result.success) {
-    //         setNotifications((prev) =>
-    //             prev.map((n) => ({ ...n, isRead: true }))
-    //         );
-    //         setUnreadCount(0);
-    //     }
-    // };
-
     const handleDeleteNotification = async (notificationId: string) => {
         const result = await deleteNotification(notificationId);
         if (result.success) {
@@ -234,21 +212,21 @@ export default function Dashboard() {
                     <h1 className="text-2xl font-bold">
                         Welcome back, {userName}!
                     </h1>
-                    {/* <p className="text-muted-foreground">
+                    <p className="text-muted-foreground">
                         Role: {userRole} •{" "}
                         {isConnected ? "Connected" : "Disconnected"}
-                    </p> */}
+                    </p>
                 </div>
                 <div className="flex items-center gap-4">
-                    {/* <NotificationCenter
+                    <NotificationCenter
                         notifications={notifications}
                         unreadCount={unreadCount}
-                        onMarkAsRead={handleMarkAsRead}
-                        onMarkAllAsRead={handleMarkAllAsRead}
+                        onMarkAsRead={markNotificationAsRead}
+                        onMarkAllAsRead={markAllNotificationsAsRead}
                         onDeleteNotification={handleDeleteNotification}
                         onClearAll={handleClearAll}
                         onNavigateToOrder={handleNavigateToOrder}
-                    /> */}
+                    />
                     <LogoutButton />
                 </div>
             </div>
